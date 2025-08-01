@@ -85,7 +85,7 @@ jobs:
         
     - name: Criar Release (se for tag)
       if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           wormaze-debug.apk
