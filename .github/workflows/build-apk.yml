@@ -5,7 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch: # Permite executar manualmente
+  workflow_dispatch:
 
 jobs:
   build-apk:
@@ -23,23 +23,39 @@ jobs:
         
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
-        
+      with:
+        licenses: |
+          android-sdk-license-ed0d0a5b
+          android-sdk-license-33b6a2b5
+          
     - name: Clone LÖVE Android template
       run: |
         git clone --depth 1 https://github.com/love2d/love-android-sdl2.git love-template
+        mkdir -p love-template/app/src/main/assets/game
         
-    - name: Preparar arquivos do jogo
+    - name: Copiar arquivos do jogo
       run: |
-        # Copiar arquivos do jogo
-        cp main.lua love-template/app/src/main/assets/
-        cp conf.lua love-template/app/src/main/assets/
+        # Copiar arquivos principais
+        cp main.lua love-template/app/src/main/assets/game/
+        cp conf.lua love-template/app/src/main/assets/game/
         
-        # Personalizar AndroidManifest.xml
-        sed -i 's/package="org.love2d.android"/package="com.wormaze.game"/' love-template/app/src/main/AndroidManifest.xml
-        sed -i 's/android:label="LÖVE"/android:label="WORMAZE"/' love-template/app/src/main/AndroidManifest.xml
+        # Copiar outros assets (ajuste conforme sua estrutura)
+        mkdir -p love-template/app/src/main/assets/game/images
+        cp -r images/* love-template/app/src/main/assets/game/images/ || true
+        cp -r sounds love-template/app/src/main/assets/game/ || true
+        cp -r music love-template/app/src/main/assets/game/ || true
         
-        # Personalizar build.gradle
-        sed -i 's/applicationId "org.love2d.android"/applicationId "com.wormaze.game"/' love-template/app/build.gradle
+        # Personalizar configurações Android
+        sed -i 's/org.love2d.android/com.wormaze.game/' love-template/app/src/main/AndroidManifest.xml
+        sed -i 's/LÖVE/WORMAZE/' love-template/app/src/main/AndroidManifest.xml
+        sed -i 's/org.love2d.android/com.wormaze.game/' love-template/app/build.gradle
+        sed -i 's/versionName "11.4"/versionName "1.0"/' love-template/app/build.gradle
+        sed -i 's/versionCode 114/versionCode 1/' love-template/app/build.gradle
+        
+    - name: Configurar ambiente Android
+      run: |
+        echo "$ANDROID_SDK_ROOT" >> $GITHUB_PATH
+        echo "$ANDROID_NDK_ROOT" >> $GITHUB_PATH
         
     - name: Cache Gradle
       uses: actions/cache@v4
@@ -47,6 +63,7 @@ jobs:
         path: |
           ~/.gradle/caches
           ~/.gradle/wrapper
+          love-template/.gradle
         key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
         restore-keys: |
           ${{ runner.os }}-gradle-
@@ -59,37 +76,30 @@ jobs:
         cd love-template
         ./gradlew assembleDebug --no-daemon --stacktrace
         
-    - name: Build APK Release (não assinado)
+    - name: Build APK Release (assinado com debug key)
       run: |
         cd love-template
         ./gradlew assembleRelease --no-daemon --stacktrace
         
-    - name: Renomear APKs
+    - name: Renomear e mover APKs
       run: |
-        mv love-template/app/build/outputs/apk/debug/app-debug.apk ./wormaze-debug.apk
-        mv love-template/app/build/outputs/apk/release/app-release-unsigned.apk ./wormaze-release-unsigned.apk
+        mkdir -p build-output
+        mv love-template/app/build/outputs/apk/debug/app-debug.apk ./build-output/wormaze-debug.apk
+        mv love-template/app/build/outputs/apk/release/app-release-unsigned.apk ./build-output/wormaze-release-unsigned.apk
         
-    - name: Upload APK Debug
+    - name: Upload APKs como artefatos
       uses: actions/upload-artifact@v4
       with:
-        name: wormaze-debug-apk
-        path: wormaze-debug.apk
-        retention-days: 30
-        
-    - name: Upload APK Release
-      uses: actions/upload-artifact@v4
-      with:
-        name: wormaze-release-apk
-        path: wormaze-release-unsigned.apk
+        name: wormaze-apks
+        path: build-output/*
         retention-days: 30
         
     - name: Criar Release (se for tag)
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          wormaze-debug.apk
-          wormaze-release-unsigned.apk
+        files: build-output/*
         name: WORMAZE ${{ github.ref_name }}
+        body: "APK build for WORMAZE version ${{ github.ref_name }}"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
