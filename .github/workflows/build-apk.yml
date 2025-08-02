@@ -1,11 +1,14 @@
 name: Build WORMAZE APK
-
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch: # Permite executar manualmente
+
+env:
+  APP_NAME: "WORMAZE"
+  PACKAGE_NAME: "com.wormaze.game"
 
 jobs:
   build-apk:
@@ -23,32 +26,75 @@ jobs:
         
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
+      
+    - name: Accept Android SDK licenses
+      run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+        
     - name: Clone LÖVE Android template
       run: |
         git clone --depth 1 https://github.com/love2d/love-android-sdl2.git love-template
         
+    - name: Verificar arquivos do jogo
+      run: |
+        if [ ! -f "main.lua" ]; then
+          echo "Error: main.lua not found in repository root"
+          echo "Available files:"
+          ls -la
+          exit 1
+        fi
+        echo "Game files found successfully"
+        
     - name: Preparar arquivos do jogo
       run: |
-        # Copiar arquivos do jogo
-        cp main.lua love-template/app/src/main/assets/
-        cp conf.lua love-template/app/src/main/assets/
+        # Copiar arquivos Lua principais
+        cp *.lua love-template/app/src/main/assets/ 2>/dev/null || echo "No .lua files in root"
+        
+        # Copiar assets se existirem
+        if [ -d "assets" ]; then
+          cp -r assets/* love-template/app/src/main/assets/
+          echo "Assets copied successfully"
+        fi
+        
+        # Copiar outros arquivos necessários
+        if [ -d "src" ]; then
+          cp -r src/* love-template/app/src/main/assets/
+          echo "Source files copied successfully"
+        fi
+        
+        # Verificar se os arquivos foram copiados
+        echo "Files in assets directory:"
+        ls -la love-template/app/src/main/assets/
+        
+    - name: Personalizar configurações Android
+      run: |
+        cd love-template
+        
+        # Definir versão baseada no commit ou tag
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          VERSION_NAME="${{ github.ref_name }}"
+          VERSION_CODE=$(echo "${{ github.ref_name }}" | sed 's/[^0-9]//g' | head -c 8)
+        else
+          VERSION_NAME="dev-$(echo ${{ github.sha }} | head -c 7)"
+          VERSION_CODE=$(date +%s)
+        fi
+        
+        echo "Setting version: $VERSION_NAME ($VERSION_CODE)"
         
         # Personalizar AndroidManifest.xml
-        sed -i 's/package="org.love2d.android"/package="com.wormaze.game"/' love-template/app/src/main/AndroidManifest.xml
-        sed -i 's/android:label="LÖVE"/android:label="WORMAZE"/' love-template/app/src/main/AndroidManifest.xml
+        sed -i "s/package=\"org.love2d.android\"/package=\"${{ env.PACKAGE_NAME }}\"/" app/src/main/AndroidManifest.xml
+        sed -i "s/android:label=\"LÖVE\"/android:label=\"${{ env.APP_NAME }}\"/" app/src/main/AndroidManifest.xml
         
         # Personalizar build.gradle
-        sed -i 's/applicationId "org.love2d.android"/applicationId "com.wormaze.game"/' love-template/app/build.gradle
+        sed -i "s/applicationId \"org.love2d.android\"/applicationId \"${{ env.PACKAGE_NAME }}\"/" app/build.gradle
+        sed -i "s/versionCode 1/versionCode $VERSION_CODE/" app/build.gradle
+        sed -i "s/versionName \"1.0\"/versionName \"$VERSION_NAME\"/" app/build.gradle
         
-    - name: Cache Gradle
-      uses: actions/cache@v4
+        echo "Android configuration updated successfully"
+        
+    - name: Setup Gradle
+      uses: gradle/gradle-build-action@v2
       with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-        key: ${{ runner.os }}-gradle-${{ hashFiles('love-template/**/*.gradle*', 'love-template/**/gradle-wrapper.properties') }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-
+        gradle-home-cache-cleanup: true
           
     - name: Tornar gradlew executável
       run: chmod +x love-template/gradlew
@@ -56,17 +102,42 @@ jobs:
     - name: Build APK Debug
       run: |
         cd love-template
-        ./gradlew assembleDebug --no-daemon --stacktrace
+        echo "Building debug APK..."
+        ./gradlew assembleDebug --no-daemon --stacktrace --info
         
     - name: Build APK Release (não assinado)
       run: |
         cd love-template
-        ./gradlew assembleRelease --no-daemon --stacktrace
+        echo "Building release APK..."
+        ./gradlew assembleRelease --no-daemon --stacktrace --info
         
-    - name: Renomear APKs
+    - name: Verificar e renomear APKs
       run: |
-        mv love-template/app/build/outputs/apk/debug/app-debug.apk ./wormaze-debug.apk
-        mv love-template/app/build/outputs/apk/release/app-release-unsigned.apk ./wormaze-release-unsigned.apk
+        # Verificar se os APKs foram criados
+        DEBUG_APK="love-template/app/build/outputs/apk/debug/app-debug.apk"
+        RELEASE_APK="love-template/app/build/outputs/apk/release/app-release-unsigned.apk"
+        
+        if [ ! -f "$DEBUG_APK" ]; then
+          echo "Error: Debug APK not found at $DEBUG_APK"
+          echo "Available files in debug directory:"
+          ls -la love-template/app/build/outputs/apk/debug/ || echo "Debug directory not found"
+          exit 1
+        fi
+        
+        if [ ! -f "$RELEASE_APK" ]; then
+          echo "Error: Release APK not found at $RELEASE_APK"
+          echo "Available files in release directory:"
+          ls -la love-template/app/build/outputs/apk/release/ || echo "Release directory not found"
+          exit 1
+        fi
+        
+        # Renomear APKs
+        mv "$DEBUG_APK" "./wormaze-debug.apk"
+        mv "$RELEASE_APK" "./wormaze-release-unsigned.apk"
+        
+        # Mostrar informações dos APKs
+        echo "APKs created successfully:"
+        ls -la *.apk
         
     - name: Upload APK Debug
       uses: actions/upload-artifact@v4
@@ -82,6 +153,18 @@ jobs:
         path: wormaze-release-unsigned.apk
         retention-days: 30
         
+    - name: Create Release Summary
+      run: |
+        echo "## 📱 WORMAZE APK Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Build Status:** Success" >> $GITHUB_STEP_SUMMARY
+        echo "📦 **Package:** ${{ env.PACKAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "🏷️ **Version:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Generated APKs:" >> $GITHUB_STEP_SUMMARY
+        echo "- 🐛 **Debug APK:** wormaze-debug.apk" >> $GITHUB_STEP_SUMMARY
+        echo "- 🚀 **Release APK:** wormaze-release-unsigned.apk" >> $GITHUB_STEP_SUMMARY
+        
     - name: Criar Release (se for tag)
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
@@ -89,6 +172,21 @@ jobs:
         files: |
           wormaze-debug.apk
           wormaze-release-unsigned.apk
-        name: WORMAZE ${{ github.ref_name }}
+        name: ${{ env.APP_NAME }} ${{ github.ref_name }}
+        body: |
+          ## 🎮 WORMAZE Release ${{ github.ref_name }}
+          
+          ### 📱 Downloads
+          - **wormaze-debug.apk** - Debug version for testing
+          - **wormaze-release-unsigned.apk** - Release version (unsigned)
+          
+          ### 📋 Installation
+          1. Download the APK file
+          2. Enable "Install from unknown sources" on your Android device
+          3. Install the APK
+          
+          > **Note:** The release APK is unsigned. For production use, you should sign it with your own keystore.
+        draft: false
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
