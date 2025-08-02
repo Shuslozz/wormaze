@@ -25,8 +25,18 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: 'gradle'
         
+    - name: Cache Gradle
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          love-template/.gradle
+        key: ${{ runner.os }}-gradle-${{ hashFiles('love-template/**/*.gradle*', 'love-template/gradle/wrapper/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+      
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
@@ -41,35 +51,19 @@ jobs:
         git clone --depth 1 https://github.com/love2d/love-android-sdl2.git love-template
         mkdir -p love-template/app/src/main/assets/game
         
-    - name: Verify project structure
-      run: |
-        echo "Current files:"
-        ls -la
-        echo "Lua files:"
-        find . -name "*.lua" -type f
-        
     - name: Copy game files
       run: |
-        # Copy essential files
         cp main.lua love-template/app/src/main/assets/game/
         cp conf.lua love-template/app/src/main/assets/game/
         
-        # Verify copy
-        echo "Copied files:"
-        ls -la love-template/app/src/main/assets/game/
-        
     - name: Customize Android settings
       run: |
-        # AndroidManifest.xml
         sed -i "s/org.love2d.android/$APP_ID/" love-template/app/src/main/AndroidManifest.xml
         sed -i "s/LÖVE/$APP_NAME/" love-template/app/src/main/AndroidManifest.xml
-        
-        # build.gradle
         sed -i "s/org.love2d.android/$APP_ID/" love-template/app/build.gradle
         sed -i "s/versionName \"11.4\"/versionName \"$VERSION_NAME\"/" love-template/app/build.gradle
         sed -i "s/versionCode 114/versionCode $VERSION_CODE/" love-template/app/build.gradle
         
-        # Configure debug signing for release
         echo "android {
             signingConfigs {
                 debug {
@@ -88,47 +82,31 @@ jobs:
             }
         }" >> love-template/app/build.gradle
         
-    - name: Make gradlew executable
-      run: chmod +x love-template/gradlew
-      
-    - name: Build Debug APK
+    - name: Build APKs
       run: |
         cd love-template
-        ./gradlew assembleDebug --no-daemon --stacktrace
+        chmod +x gradlew
+        ./gradlew assembleDebug assembleRelease --no-daemon --stacktrace
         
-    - name: Build Release APK
-      run: |
-        cd love-template
-        ./gradlew assembleRelease --no-daemon --stacktrace
-        
-    - name: Verify generated APKs
-      run: |
-        ls -la love-template/app/build/outputs/apk/*/*.apk
-        
-    - name: Rename and move APKs
+    - name: Prepare artifacts
       run: |
         mkdir -p build-output
         mv love-template/app/build/outputs/apk/debug/app-debug.apk build-output/wormaze-debug.apk
         mv love-template/app/build/outputs/apk/release/app-release.apk build-output/wormaze-release.apk
-        echo "APKs ready:"
-        ls -la build-output/
         
-    - name: Upload APKs as artifacts
+    - name: Upload APKs
       uses: actions/upload-artifact@v4
       with:
         name: wormaze-apks
         path: build-output/*
         retention-days: 30
         
-    - name: Create Release (on tag)
+    - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
       with:
         files: build-output/*
         name: ${{ env.APP_NAME }} ${{ github.ref_name }}
-        body: |
-          APK build for ${{ env.APP_NAME }} version ${{ github.ref_name }}
-          - Debug APK: wormaze-debug.apk
-          - Release APK: wormaze-release.apk
+        body: "APK build for ${{ env.APP_NAME }} version ${{ github.ref_name }}"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
