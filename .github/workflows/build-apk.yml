@@ -17,7 +17,7 @@ jobs:
       VERSION_CODE: 1
     
     steps:
-    - name: Checkout código
+    - name: Checkout code
       uses: actions/checkout@v4
       
     - name: Setup JDK 17
@@ -35,36 +35,30 @@ jobs:
         licenses: |
           android-sdk-license-ed0d0a5b
           android-sdk-license-33b6a2b5
-          android-googletv-license-33b6a2b5
-          android-sdk-arm-dbt-license-33b6a2b5
-          android-sdk-preview-license-33b6a2b5
           
     - name: Clone LÖVE Android template
       run: |
         git clone --depth 1 https://github.com/love2d/love-android-sdl2.git love-template
         mkdir -p love-template/app/src/main/assets/game
         
-    - name: Verificar estrutura de arquivos
+    - name: Verify project structure
       run: |
+        echo "Current files:"
         ls -la
-        find . -type f -name "*.lua" | head -5
+        echo "Lua files:"
+        find . -name "*.lua" -type f
         
-    - name: Copiar arquivos do jogo
+    - name: Copy game files
       run: |
-        # Copiar arquivos principais
+        # Copy essential files
         cp main.lua love-template/app/src/main/assets/game/
         cp conf.lua love-template/app/src/main/assets/game/
         
-        # Copiar assets com verificação de existência
-        [ -d "images" ] && mkdir -p love-template/app/src/main/assets/game/images && cp -r images/* love-template/app/src/main/assets/game/images/
-        [ -d "sounds" ] && cp -r sounds love-template/app/src/main/assets/game/
-        [ -d "music" ] && cp -r music love-template/app/src/main/assets/game/
-        [ -d "src" ] && cp -r src love-template/app/src/main/assets/game/
+        # Verify copy
+        echo "Copied files:"
+        ls -la love-template/app/src/main/assets/game/
         
-        # Verificar cópia
-        find love-template/app/src/main/assets/game -type f | head -10
-        
-    - name: Personalizar configurações Android
+    - name: Customize Android settings
       run: |
         # AndroidManifest.xml
         sed -i "s/org.love2d.android/$APP_ID/" love-template/app/src/main/AndroidManifest.xml
@@ -75,7 +69,7 @@ jobs:
         sed -i "s/versionName \"11.4\"/versionName \"$VERSION_NAME\"/" love-template/app/build.gradle
         sed -i "s/versionCode 114/versionCode $VERSION_CODE/" love-template/app/build.gradle
         
-        # Configurar signing com debug key para release
+        # Configure debug signing for release
         echo "android {
             signingConfigs {
                 debug {
@@ -94,38 +88,39 @@ jobs:
             }
         }" >> love-template/app/build.gradle
         
-    - name: Tornar gradlew executável
+    - name: Make gradlew executable
       run: chmod +x love-template/gradlew
       
-    - name: Build APK Debug
+    - name: Build Debug APK
       run: |
         cd love-template
         ./gradlew assembleDebug --no-daemon --stacktrace
         
-    - name: Build APK Release
+    - name: Build Release APK
       run: |
         cd love-template
         ./gradlew assembleRelease --no-daemon --stacktrace
         
-    - name: Verificar APKs gerados
+    - name: Verify generated APKs
       run: |
         ls -la love-template/app/build/outputs/apk/*/*.apk
         
-    - name: Renomear e mover APKs
+    - name: Rename and move APKs
       run: |
         mkdir -p build-output
         mv love-template/app/build/outputs/apk/debug/app-debug.apk build-output/wormaze-debug.apk
         mv love-template/app/build/outputs/apk/release/app-release.apk build-output/wormaze-release.apk
+        echo "APKs ready:"
         ls -la build-output/
         
-    - name: Upload APKs como artefatos
+    - name: Upload APKs as artifacts
       uses: actions/upload-artifact@v4
       with:
         name: wormaze-apks
         path: build-output/*
         retention-days: 30
         
-    - name: Criar Release (se for tag)
+    - name: Create Release (on tag)
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
       with:
