@@ -10,6 +10,11 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+    env:
+      APP_ID: com.wormaze.game
+      APP_NAME: WORMAZE
+      VERSION_NAME: 1.0
+      VERSION_CODE: 1
     
     steps:
     - name: Checkout código
@@ -20,18 +25,29 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
+        cache: 'gradle'
         
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
+        ndk-version: '25.1.8937393'
+        cmake-version: '3.22.1'
         licenses: |
           android-sdk-license-ed0d0a5b
           android-sdk-license-33b6a2b5
+          android-googletv-license-33b6a2b5
+          android-sdk-arm-dbt-license-33b6a2b5
+          android-sdk-preview-license-33b6a2b5
           
     - name: Clone LÖVE Android template
       run: |
         git clone --depth 1 https://github.com/love2d/love-android-sdl2.git love-template
         mkdir -p love-template/app/src/main/assets/game
+        
+    - name: Verificar estrutura de arquivos
+      run: |
+        ls -la
+        find . -type f -name "*.lua" | head -5
         
     - name: Copiar arquivos do jogo
       run: |
@@ -39,35 +55,45 @@ jobs:
         cp main.lua love-template/app/src/main/assets/game/
         cp conf.lua love-template/app/src/main/assets/game/
         
-        # Copiar outros assets (ajuste conforme sua estrutura)
-        mkdir -p love-template/app/src/main/assets/game/images
-        cp -r images/* love-template/app/src/main/assets/game/images/ || true
-        cp -r sounds love-template/app/src/main/assets/game/ || true
-        cp -r music love-template/app/src/main/assets/game/ || true
+        # Copiar assets com verificação de existência
+        [ -d "images" ] && mkdir -p love-template/app/src/main/assets/game/images && cp -r images/* love-template/app/src/main/assets/game/images/
+        [ -d "sounds" ] && cp -r sounds love-template/app/src/main/assets/game/
+        [ -d "music" ] && cp -r music love-template/app/src/main/assets/game/
+        [ -d "src" ] && cp -r src love-template/app/src/main/assets/game/
         
-        # Personalizar configurações Android
-        sed -i 's/org.love2d.android/com.wormaze.game/' love-template/app/src/main/AndroidManifest.xml
-        sed -i 's/LÖVE/WORMAZE/' love-template/app/src/main/AndroidManifest.xml
-        sed -i 's/org.love2d.android/com.wormaze.game/' love-template/app/build.gradle
-        sed -i 's/versionName "11.4"/versionName "1.0"/' love-template/app/build.gradle
-        sed -i 's/versionCode 114/versionCode 1/' love-template/app/build.gradle
+        # Verificar cópia
+        find love-template/app/src/main/assets/game -type f | head -10
         
-    - name: Configurar ambiente Android
+    - name: Personalizar configurações Android
       run: |
-        echo "$ANDROID_SDK_ROOT" >> $GITHUB_PATH
-        echo "$ANDROID_NDK_ROOT" >> $GITHUB_PATH
+        # AndroidManifest.xml
+        sed -i "s/org.love2d.android/$APP_ID/" love-template/app/src/main/AndroidManifest.xml
+        sed -i "s/LÖVE/$APP_NAME/" love-template/app/src/main/AndroidManifest.xml
         
-    - name: Cache Gradle
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-          love-template/.gradle
-        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-
-          
+        # build.gradle
+        sed -i "s/org.love2d.android/$APP_ID/" love-template/app/build.gradle
+        sed -i "s/versionName \"11.4\"/versionName \"$VERSION_NAME\"/" love-template/app/build.gradle
+        sed -i "s/versionCode 114/versionCode $VERSION_CODE/" love-template/app/build.gradle
+        
+        # Configurar signing com debug key para release
+        echo "android {
+            signingConfigs {
+                debug {
+                    storeFile file('debug.keystore')
+                    keyAlias 'androiddebugkey'
+                    keyPassword 'android'
+                    storePassword 'android'
+                }
+            }
+            buildTypes {
+                release {
+                    signingConfig signingConfigs.debug
+                    minifyEnabled false
+                    proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                }
+            }
+        }" >> love-template/app/build.gradle
+        
     - name: Tornar gradlew executável
       run: chmod +x love-template/gradlew
       
@@ -76,16 +102,21 @@ jobs:
         cd love-template
         ./gradlew assembleDebug --no-daemon --stacktrace
         
-    - name: Build APK Release (assinado com debug key)
+    - name: Build APK Release
       run: |
         cd love-template
         ./gradlew assembleRelease --no-daemon --stacktrace
         
+    - name: Verificar APKs gerados
+      run: |
+        ls -la love-template/app/build/outputs/apk/*/*.apk
+        
     - name: Renomear e mover APKs
       run: |
         mkdir -p build-output
-        mv love-template/app/build/outputs/apk/debug/app-debug.apk ./build-output/wormaze-debug.apk
-        mv love-template/app/build/outputs/apk/release/app-release-unsigned.apk ./build-output/wormaze-release-unsigned.apk
+        mv love-template/app/build/outputs/apk/debug/app-debug.apk build-output/wormaze-debug.apk
+        mv love-template/app/build/outputs/apk/release/app-release.apk build-output/wormaze-release.apk
+        ls -la build-output/
         
     - name: Upload APKs como artefatos
       uses: actions/upload-artifact@v4
@@ -99,7 +130,10 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: build-output/*
-        name: WORMAZE ${{ github.ref_name }}
-        body: "APK build for WORMAZE version ${{ github.ref_name }}"
+        name: ${{ env.APP_NAME }} ${{ github.ref_name }}
+        body: |
+          APK build for ${{ env.APP_NAME }} version ${{ github.ref_name }}
+          - Debug APK: wormaze-debug.apk
+          - Release APK: wormaze-release.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
