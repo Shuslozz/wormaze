@@ -46,35 +46,48 @@ jobs:
     - name: Configure Android build
       run: |
         cd love-template
+        
+        # Update configuration files
         sed -i "s/org.love2d.android/$APP_ID/" app/src/main/AndroidManifest.xml
         sed -i "s/LÖVE/$APP_NAME/" app/src/main/AndroidManifest.xml
         sed -i "s/org.love2d.android/$APP_ID/" app/build.gradle
         sed -i "s/versionName \"11.4\"/versionName \"$VERSION_NAME\"/" app/build.gradle
         sed -i "s/versionCode 114/versionCode $VERSION_CODE/" app/build.gradle
         
-        # Update Gradle wrapper to stable version
+        # Disable prefab and NDK if not needed
+        if [ -f "app/build.gradle" ]; then
+          sed -i '/android {/a\
+          buildFeatures {\
+              prefab false\
+          }\
+          ndkVersion "25.1.8937393"\
+          externalNativeBuild {\
+              cmake {\
+                  version "3.22.1"\
+              }\
+          }' app/build.gradle
+        fi
+        
+        # Update Gradle wrapper
         ./gradlew wrapper --gradle-version 8.9 --distribution-type all
         
     - name: Build APKs
       env:
-        GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2048m -Dorg.gradle.daemon=false"
+        GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -Dorg.gradle.daemon=false"
       run: |
         cd love-template
         chmod +x gradlew
         
-        # First try normal build
-        if ./gradlew clean assembleDebug assembleRelease --stacktrace --warning-mode none; then
+        # Clean build environment first
+        ./gradlew clean
+        
+        # Build with limited logging
+        if ./gradlew assembleDebug assembleRelease --stacktrace --warning-mode none; then
           echo "✅ Build succeeded"
         else
-          echo "❌ Initial build failed, retrying with more info..."
-          # Second try with info logging only (no debug)
-          ./gradlew clean assembleDebug assembleRelease --stacktrace --info || {
-            echo "❌ Build failed after retry"
-            # Show build directory structure for debugging
-            echo "Build directory contents:"
-            find app/build -type f
-            exit 1
-          }
+          echo "❌ Build failed, checking outputs..."
+          ls -la app/build/outputs/apk/
+          exit 1
         fi
         
     - name: Verify and package APKs
@@ -84,20 +97,20 @@ jobs:
         # Debug APK
         if [ -f "love-template/app/build/outputs/apk/debug/app-debug.apk" ]; then
           mv love-template/app/build/outputs/apk/debug/app-debug.apk build-output/wormaze-debug.apk
-          echo "✅ Found debug APK"
+          echo "✅ Debug APK found"
         else
           echo "❌ Debug APK not found!"
-          ls -la love-template/app/build/outputs/apk/debug/
+          find love-template/app/build -name "*.apk" || true
           exit 1
         fi
         
         # Release APK
         if [ -f "love-template/app/build/outputs/apk/release/app-release.apk" ]; then
           mv love-template/app/build/outputs/apk/release/app-release.apk build-output/wormaze-release.apk
-          echo "✅ Found release APK"
+          echo "✅ Release APK found"
         else
           echo "❌ Release APK not found!"
-          ls -la love-template/app/build/outputs/apk/release/
+          find love-template/app/build -name "*.apk" || true
           exit 1
         fi
         
