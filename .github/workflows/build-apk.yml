@@ -47,76 +47,83 @@ jobs:
       run: |
         cd love-template
         
-        # Update configuration files
+        # Basic configuration
         sed -i "s/org.love2d.android/$APP_ID/" app/src/main/AndroidManifest.xml
         sed -i "s/LÖVE/$APP_NAME/" app/src/main/AndroidManifest.xml
         sed -i "s/org.love2d.android/$APP_ID/" app/build.gradle
         sed -i "s/versionName \"11.4\"/versionName \"$VERSION_NAME\"/" app/build.gradle
         sed -i "s/versionCode 114/versionCode $VERSION_CODE/" app/build.gradle
         
-        # Disable prefab and NDK if not needed
-        if [ -f "app/build.gradle" ]; then
-          sed -i '/android {/a\
-          buildFeatures {\
-              prefab false\
-          }\
-          ndkVersion "25.1.8937393"\
-          externalNativeBuild {\
-              cmake {\
-                  version "3.22.1"\
-              }\
-          }' app/build.gradle
-        fi
+        # Simplify build.gradle
+        cat > app/build.gradle << 'EOL'
+        plugins {
+            id 'com.android.application'
+        }
+
+        android {
+            namespace '$APP_ID'
+            compileSdk 34
+            
+            defaultConfig {
+                applicationId '$APP_ID'
+                minSdk 16
+                targetSdk 34
+                versionCode $VERSION_CODE
+                versionName '$VERSION_NAME'
+            }
+            
+            buildTypes {
+                release {
+                    minifyEnabled false
+                    proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                }
+            }
+            
+            sourceSets {
+                main {
+                    assets.srcDirs = ['src/main/assets']
+                }
+            }
+        }
+
+        dependencies {
+            implementation fileTree(dir: 'libs', include: ['*.jar'])
+        }
+        EOL
         
-        # Update Gradle wrapper
+        # Initialize Gradle wrapper
         ./gradlew wrapper --gradle-version 8.9 --distribution-type all
         
-    - name: Build APKs
+    - name: Build Debug APK
       env:
-        GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4096m -Dorg.gradle.daemon=false"
+        GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2048m"
       run: |
         cd love-template
         chmod +x gradlew
-        
-        # Clean build environment first
-        ./gradlew clean
-        
-        # Build with limited logging
-        if ./gradlew assembleDebug assembleRelease --stacktrace --warning-mode none; then
-          echo "✅ Build succeeded"
-        else
-          echo "❌ Build failed, checking outputs..."
-          ls -la app/build/outputs/apk/
-          exit 1
-        fi
+        ./gradlew assembleDebug --stacktrace || {
+            echo "Build failed, showing task list:"
+            ./gradlew tasks
+            echo "Build directory contents:"
+            find . -type d | grep -v "build" || true
+            exit 1
+        }
         
     - name: Verify and package APKs
       run: |
         mkdir -p build-output
-        
-        # Debug APK
         if [ -f "love-template/app/build/outputs/apk/debug/app-debug.apk" ]; then
           mv love-template/app/build/outputs/apk/debug/app-debug.apk build-output/wormaze-debug.apk
           echo "✅ Debug APK found"
+          ls -lh build-output/
         else
-          echo "❌ Debug APK not found!"
-          find love-template/app/build -name "*.apk" || true
+          echo "❌ Debug APK not found! Full build directory:"
+          find love-template/app/build -type d || true
           exit 1
         fi
         
-        # Release APK
-        if [ -f "love-template/app/build/outputs/apk/release/app-release.apk" ]; then
-          mv love-template/app/build/outputs/apk/release/app-release.apk build-output/wormaze-release.apk
-          echo "✅ Release APK found"
-        else
-          echo "❌ Release APK not found!"
-          find love-template/app/build -name "*.apk" || true
-          exit 1
-        fi
-        
-    - name: Upload APKs
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: wormaze-apks
-        path: build-output/*
+        name: wormaze-apk
+        path: build-output/wormaze-debug.apk
         retention-days: 30
