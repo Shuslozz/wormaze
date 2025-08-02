@@ -30,9 +30,14 @@ jobs:
     - name: Accept Android SDK licenses
       run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
         
-    - name: Clone LÖVE Android template
+    - name: Download LÖVE Android template
       run: |
-        git clone --depth 1 https://github.com/love2d/love-android-sdl2.git love-template
+        echo "Downloading LÖVE Android template..."
+        curl -L https://github.com/love2d/love-android-sdl2/archive/refs/heads/main.tar.gz -o love-template.tar.gz
+        tar -xzf love-template.tar.gz
+        mv love-android-sdl2-main love-template
+        rm love-template.tar.gz
+        echo "Template downloaded and extracted successfully"
         
     - name: Verificar arquivos do jogo
       run: |
