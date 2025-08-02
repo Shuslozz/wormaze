@@ -33,21 +33,18 @@ jobs:
           android-sdk-license-ed0d0a5b
           android-sdk-license-33b6a2b5
           
-    - name: Clone and prepare LÖVE Android
+    - name: Clone LÖVE Android template
       run: |
-        # Clone with retries
-        for i in {1..3}; do
-          git clone --depth 1 https://github.com/love2d/love-android.git love-template && break || sleep 5
-        done
-        
-        # Create game directory structure
+        git clone --depth 1 --branch main https://github.com/love2d/love-android.git love-template
         mkdir -p love-template/app/src/main/assets/game
         
-        # Copy game files
+    - name: Copy game files
+      run: |
         cp main.lua love-template/app/src/main/assets/game/
         cp conf.lua love-template/app/src/main/assets/game/
         
-        # Configure Android build
+    - name: Configure Android build
+      run: |
         cd love-template
         sed -i "s/org.love2d.android/$APP_ID/" app/src/main/AndroidManifest.xml
         sed -i "s/LÖVE/$APP_NAME/" app/src/main/AndroidManifest.xml
@@ -55,26 +52,8 @@ jobs:
         sed -i "s/versionName \"11.4\"/versionName \"$VERSION_NAME\"/" app/build.gradle
         sed -i "s/versionCode 114/versionCode $VERSION_CODE/" app/build.gradle
         
-        # Configure signing
-        cat >> app/build.gradle << 'EOF'
-        android {
-            signingConfigs {
-                debug {
-                    storeFile file('debug.keystore')
-                    keyAlias 'androiddebugkey'
-                    keyPassword 'android'
-                    storePassword 'android'
-                }
-            }
-            buildTypes {
-                release {
-                    signingConfig signingConfigs.debug
-                    minifyEnabled false
-                    proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                }
-            }
-        }
-        EOF
+        # Update Gradle wrapper to stable version
+        ./gradlew wrapper --gradle-version 8.9 --distribution-type all
         
     - name: Build APKs
       env:
@@ -83,20 +62,44 @@ jobs:
         cd love-template
         chmod +x gradlew
         
-        # Clean and build with increased memory
-        ./gradlew clean assembleDebug assembleRelease --stacktrace --info || {
-          echo "❌ Build failed, retrying with more verbose output..."
-          ./gradlew clean assembleDebug assembleRelease --stacktrace --debug --no-daemon
-          exit 1
-        }
+        # First try normal build
+        if ./gradlew clean assembleDebug assembleRelease --stacktrace --warning-mode none; then
+          echo "✅ Build succeeded"
+        else
+          echo "❌ Initial build failed, retrying with more info..."
+          # Second try with info logging only (no debug)
+          ./gradlew clean assembleDebug assembleRelease --stacktrace --info || {
+            echo "❌ Build failed after retry"
+            # Show build directory structure for debugging
+            echo "Build directory contents:"
+            find app/build -type f
+            exit 1
+          }
+        fi
         
-    - name: Package APKs
+    - name: Verify and package APKs
       run: |
         mkdir -p build-output
-        mv love-template/app/build/outputs/apk/debug/app-debug.apk build-output/wormaze-debug.apk
-        mv love-template/app/build/outputs/apk/release/app-release.apk build-output/wormaze-release.apk
-        echo "✅ Build artifacts:"
-        ls -lh build-output/
+        
+        # Debug APK
+        if [ -f "love-template/app/build/outputs/apk/debug/app-debug.apk" ]; then
+          mv love-template/app/build/outputs/apk/debug/app-debug.apk build-output/wormaze-debug.apk
+          echo "✅ Found debug APK"
+        else
+          echo "❌ Debug APK not found!"
+          ls -la love-template/app/build/outputs/apk/debug/
+          exit 1
+        fi
+        
+        # Release APK
+        if [ -f "love-template/app/build/outputs/apk/release/app-release.apk" ]; then
+          mv love-template/app/build/outputs/apk/release/app-release.apk build-output/wormaze-release.apk
+          echo "✅ Found release APK"
+        else
+          echo "❌ Release APK not found!"
+          ls -la love-template/app/build/outputs/apk/release/
+          exit 1
+        fi
         
     - name: Upload APKs
       uses: actions/upload-artifact@v4
@@ -104,16 +107,3 @@ jobs:
         name: wormaze-apks
         path: build-output/*
         retention-days: 30
-        
-    - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: build-output/*
-        name: ${{ env.APP_NAME }} ${{ github.ref_name }}
-        body: |
-          WORMAZE Version ${{ github.ref_name }}
-          - Debug APK: wormaze-debug.apk
-          - Release APK: wormaze-release.apk
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
