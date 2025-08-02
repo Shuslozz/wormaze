@@ -32,8 +32,7 @@ jobs:
         path: |
           ~/.gradle/caches
           ~/.gradle/wrapper
-          love-template/.gradle
-        key: ${{ runner.os }}-gradle-${{ hashFiles('love-template/**/*.gradle*', 'love-template/gradle/wrapper/gradle-wrapper.properties') }}
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
         restore-keys: |
           ${{ runner.os }}-gradle-
       
@@ -46,23 +45,37 @@ jobs:
           android-sdk-license-ed0d0a5b
           android-sdk-license-33b6a2b5
           
-    - name: Clone LÖVE Android template
+    - name: Clone LÖVE Android template (with retry)
       run: |
-        git clone --depth 1 https://github.com/love2d/love-android-sdl2.git love-template
+        for i in {1..3}; do
+          git clone --depth 1 https://github.com/love2d/love-android.git love-template && break || sleep 5
+        done
         mkdir -p love-template/app/src/main/assets/game
+        
+    - name: Verify template clone
+      run: |
+        if [ ! -d "love-template" ]; then
+          echo "❌ Failed to clone LÖVE Android template"
+          exit 1
+        fi
+        echo "Template structure:"
+        ls -la love-template/
         
     - name: Copy game files
       run: |
         cp main.lua love-template/app/src/main/assets/game/
         cp conf.lua love-template/app/src/main/assets/game/
+        echo "Copied files:"
+        ls -la love-template/app/src/main/assets/game/
         
     - name: Customize Android settings
       run: |
-        sed -i "s/org.love2d.android/$APP_ID/" love-template/app/src/main/AndroidManifest.xml
-        sed -i "s/LÖVE/$APP_NAME/" love-template/app/src/main/AndroidManifest.xml
-        sed -i "s/org.love2d.android/$APP_ID/" love-template/app/build.gradle
-        sed -i "s/versionName \"11.4\"/versionName \"$VERSION_NAME\"/" love-template/app/build.gradle
-        sed -i "s/versionCode 114/versionCode $VERSION_CODE/" love-template/app/build.gradle
+        cd love-template
+        sed -i "s/org.love2d.android/$APP_ID/" app/src/main/AndroidManifest.xml
+        sed -i "s/LÖVE/$APP_NAME/" app/src/main/AndroidManifest.xml
+        sed -i "s/org.love2d.android/$APP_ID/" app/build.gradle
+        sed -i "s/versionName \"11.4\"/versionName \"$VERSION_NAME\"/" app/build.gradle
+        sed -i "s/versionCode 114/versionCode $VERSION_CODE/" app/build.gradle
         
         echo "android {
             signingConfigs {
@@ -80,7 +93,7 @@ jobs:
                     proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                 }
             }
-        }" >> love-template/app/build.gradle
+        }" >> app/build.gradle
         
     - name: Build APKs
       run: |
@@ -93,6 +106,8 @@ jobs:
         mkdir -p build-output
         mv love-template/app/build/outputs/apk/debug/app-debug.apk build-output/wormaze-debug.apk
         mv love-template/app/build/outputs/apk/release/app-release.apk build-output/wormaze-release.apk
+        echo "Generated APKs:"
+        ls -la build-output/
         
     - name: Upload APKs
       uses: actions/upload-artifact@v4
